@@ -131,13 +131,16 @@ export function getUserDetail(
       last_order_at: epochMsToIso(stats?.last_order_at ?? null),
     };
   }
-  if (user.affiliate_id && db.hasTable("sales")) {
-    const aff = db.queryOne<{ referrals: number; commission: number }>(
-      "SELECT COUNT(*) AS referrals, COALESCE(SUM(affiliate_fee),0) AS commission FROM sales WHERE affiliate_id = ?",
-      user.affiliate_id
-    );
-    user.affiliate_stats = aff;
+  // users.affiliate_id is the affiliate who referred this user, not the
+  // user's own affiliate id.
+  if (user.affiliate_id) {
+    user.referred_by =
+      db.queryOne<Row>(
+        `SELECT ${affiliateCodeColumns(db).join(", ")} FROM users WHERE id = ?`,
+        user.affiliate_id
+      ) ?? { id: user.affiliate_id };
   }
+  user.affiliate_stats = affiliateStats(db, user.id as string);
   return user;
 }
 
@@ -438,33 +441,126 @@ export function whatsappHealth(db: SqlDatabase): Row[] {
 
 // ----------------------------------------------------------------- affiliate
 
+//
+// An affiliate is a user whose id appears in users.affiliate_id (users they
+// referred) or sales.affiliate_id (orders credited to them). users.affiliate_id
+// on the affiliate's own row is whoever referred *them*.
+
+const PAID_SALE_STATUSES = "('Purchase','Complete')";
+
+// Public affiliate code columns: custom_affiliate_slug (wajom),
+// custom_affiliate_id (dripsender).
+const AFFILIATE_CODE_COLUMNS = ["custom_affiliate_slug", "custom_affiliate_id"];
+
+function affiliateCodeColumns(db: SqlDatabase): string[] {
+  return ["id", "name", ...db.selectColumns("users", AFFILIATE_CODE_COLUMNS)];
+}
+
+export interface AffiliateStats {
+  referred_users: number;
+  orders: number;
+  paid_orders: number;
+  commission: number;
+}
+
+const AFFILIATE_SORTS = {
+  commission: "stat_commission DESC",
+  paid_orders: "stat_paid_orders DESC",
+  referred_users: "stat_referred_users DESC",
+} as const;
+
+export type AffiliateSort = keyof typeof AFFILIATE_SORTS;
+
+function salesAggregateSql(db: SqlDatabase): string {
+  if (!db.hasTable("sales")) {
+    return "SELECT NULL AS id, 0 AS orders, 0 AS paid_orders, 0 AS commission WHERE 0";
+  }
+  return `SELECT affiliate_id AS id, COUNT(*) AS orders,
+      SUM(status IN ${PAID_SALE_STATUSES}) AS paid_orders,
+      COALESCE(SUM(CASE WHEN status IN ${PAID_SALE_STATUSES} THEN affiliate_fee END), 0) AS commission
+    FROM sales WHERE affiliate_id IS NOT NULL AND affiliate_id != '' GROUP BY affiliate_id`;
+}
+
+/** Stats for `userId` acting as an affiliate. Commission counts paid orders only. */
+export function affiliateStats(db: SqlDatabase, userId: string): AffiliateStats {
+  const refs = db.queryOne<{ c: number }>(
+    "SELECT COUNT(*) AS c FROM users WHERE affiliate_id = ?",
+    userId
+  );
+  const sales = db.hasTable("sales")
+    ? db.queryOne<Omit<AffiliateStats, "referred_users">>(
+        `SELECT COUNT(*) AS orders,
+           COALESCE(SUM(status IN ${PAID_SALE_STATUSES}), 0) AS paid_orders,
+           COALESCE(SUM(CASE WHEN status IN ${PAID_SALE_STATUSES} THEN affiliate_fee END), 0) AS commission
+         FROM sales WHERE affiliate_id = ?`,
+        userId
+      )
+    : undefined;
+  return {
+    referred_users: refs?.c ?? 0,
+    orders: sales?.orders ?? 0,
+    paid_orders: sales?.paid_orders ?? 0,
+    commission: sales?.commission ?? 0,
+  };
+}
+
 export function listAffiliates(
   db: SqlDatabase,
-  opts: { limit?: number; offset?: number } = {}
+  opts: { sortBy?: AffiliateSort | null; limit?: number; offset?: number } = {}
 ): Row[] {
+  const order = AFFILIATE_SORTS[opts.sortBy ?? "commission"];
   const [sql, lim, off] = paginate(
-    "SELECT * FROM users WHERE affiliate_id IS NOT NULL AND affiliate_id != '' ORDER BY created_at DESC",
+    `WITH refs AS (
+       SELECT affiliate_id AS id, COUNT(*) AS referred_users FROM users
+       WHERE affiliate_id IS NOT NULL AND affiliate_id != '' GROUP BY affiliate_id
+     ), s AS (${salesAggregateSql(db)})
+     SELECT u.*,
+       COALESCE(refs.referred_users, 0) AS stat_referred_users,
+       COALESCE(s.orders, 0) AS stat_orders,
+       COALESCE(s.paid_orders, 0) AS stat_paid_orders,
+       COALESCE(s.commission, 0) AS stat_commission
+     FROM users u
+     LEFT JOIN refs ON refs.id = u.id
+     LEFT JOIN s ON s.id = u.id
+     WHERE refs.id IS NOT NULL OR s.id IS NOT NULL
+     ORDER BY ${order}, u.created_at DESC`,
     opts.limit ?? 50,
     opts.offset ?? 0
   );
-  const users = convertEpochs(stripPii(db.query<Row>(sql, lim, off), "users"));
-  if (db.hasTable("sales")) {
-    for (const u of users) {
-      const agg = db.queryOne<{ referrals: number; commission: number }>(
-        "SELECT COUNT(*) AS referrals, COALESCE(SUM(affiliate_fee),0) AS commission FROM sales WHERE affiliate_id = ?",
-        u.affiliate_id
-      );
-      u.affiliate_stats = agg;
-    }
-  }
-  return users;
+  return db.query<Row>(sql, lim, off).map((r) => {
+    const stats: AffiliateStats = {
+      referred_users: r.stat_referred_users as number,
+      orders: r.stat_orders as number,
+      paid_orders: r.stat_paid_orders as number,
+      commission: r.stat_commission as number,
+    };
+    const user = convertEpochs(stripPii([r], "users"))[0];
+    user.affiliate_stats = stats;
+    return user;
+  });
 }
 
+/** `affiliateId` is the affiliate's user id or public affiliate code. */
 export function getAffiliateDetail(db: SqlDatabase, affiliateId: string): Row | undefined {
-  let user = db.queryOne<Row>("SELECT * FROM users WHERE affiliate_id = ?", affiliateId);
+  const lookup = ["id", ...db.selectColumns("users", AFFILIATE_CODE_COLUMNS)];
+  let user = db.queryOne<Row>(
+    `SELECT * FROM users WHERE ${lookup.map((c) => `${c} = ?`).join(" OR ")}
+     ORDER BY id = ? DESC LIMIT 1`,
+    ...lookup.map(() => affiliateId),
+    affiliateId
+  );
   if (!user) return undefined;
   user = stripPii([user], "users")[0];
   convertEpochs([user]);
+  affiliateId = user.id as string;
+  user.affiliate_stats = affiliateStats(db, affiliateId);
+  user.referred_users = convertEpochs(
+    db.query<Row>(
+      `SELECT ${db.selectColumns("users", ["id", "name", "plan_id", "membership_date", "paid_user", "created_at"]).join(", ")}
+       FROM users WHERE affiliate_id = ? ORDER BY created_at DESC LIMIT 100`,
+      affiliateId
+    )
+  );
   if (db.hasTable("sales")) {
     user.referral_sales = convertEpochs(
       db.query<Row>(
