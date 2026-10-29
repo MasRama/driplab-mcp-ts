@@ -26,7 +26,7 @@ List Wajom users. Search matches name/email/phone.
 | `offset` | number | optional | 0 |
 
 #### `wajom_get_user`
-Get full profile: plan, WhatsApp count, purchase stats, affiliate stats.
+Get full profile: plan, WhatsApp count, purchase stats, `referred_by` (the affiliate who referred this user), `affiliate_stats` (this user's own results as an affiliate).
 
 | Parameter | Type | Required | Default |
 |---|---|---|---|
@@ -145,15 +145,16 @@ No parameters.
 ### Affiliate
 
 #### `wajom_list_affiliates`
-List affiliates (users with affiliate_id) with referral count and commission.
+List affiliates: users who referred other users or were credited with orders. `users.affiliate_id` is the affiliate who referred that user, so `referred_users` counts users whose `affiliate_id` points at the affiliate; `orders` counts all orders credited to them; `paid_orders` and `commission` count `Purchase`/`Complete` orders only.
 
 | Parameter | Type | Required | Default |
 |---|---|---|---|
+| `sort_by` | `commission` \| `paid_orders` \| `referred_users` | optional | `commission` |
 | `limit` | number | optional | 50 |
 | `offset` | number | optional | 0 |
 
 #### `wajom_get_affiliate`
-Get affiliate detail: referral sales, withdrawals.
+Get affiliate detail: `affiliate_stats`, referred users, referral sales, withdrawals. `affiliate_id` is the affiliate's user id or public affiliate code.
 
 | Parameter | Type | Required | Default |
 |---|---|---|---|
@@ -331,7 +332,7 @@ List Dripsender users. Search matches name/email/phone.
 | `offset` | number | optional | 0 |
 
 #### `dripsender_get_user`
-Get full profile: plan, WhatsApp count, purchase stats, affiliate, balance.
+Get full profile: plan, WhatsApp count, purchase stats, `referred_by` (the affiliate who referred this user), `affiliate_stats` (this user's own results as an affiliate), balance.
 
 | Parameter | Type | Required | Default |
 |---|---|---|---|
@@ -462,15 +463,16 @@ No parameters.
 ### Affiliate
 
 #### `dripsender_list_affiliates`
-List affiliates with referral count and commission.
+List affiliates: users who referred other users or were credited with orders. `users.affiliate_id` is the affiliate who referred that user, so `referred_users` counts users whose `affiliate_id` points at the affiliate; `orders` counts all orders credited to them; `paid_orders` and `commission` count `Purchase`/`Complete` orders only.
 
 | Parameter | Type | Required | Default |
 |---|---|---|---|
+| `sort_by` | `commission` \| `paid_orders` \| `referred_users` | optional | `commission` |
 | `limit` | number | optional | 50 |
 | `offset` | number | optional | 0 |
 
 #### `dripsender_get_affiliate`
-Get affiliate detail: referral sales, withdrawals, merchant payouts.
+Get affiliate detail: `affiliate_stats`, referred users, referral sales, withdrawals, merchant payouts. `affiliate_id` is the affiliate's user id or public affiliate code.
 
 | Parameter | Type | Required | Default |
 |---|---|---|---|

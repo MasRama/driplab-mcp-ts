@@ -61,7 +61,7 @@ server.registerTool(
   "wajom_get_user",
   {
     description:
-      "Get a Wajom user's full profile: plan, WhatsApp count, purchase stats, affiliate stats.",
+      "Get a Wajom user's full profile: plan, WhatsApp count, purchase stats, referred_by (the affiliate who referred this user), affiliate_stats (this user's own results as an affiliate).",
     inputSchema: z.object({
       user_id: z.string().optional().nullable(),
       email: z.string().optional().nullable(),
@@ -240,8 +240,9 @@ server.registerTool(
   "wajom_list_affiliates",
   {
     description:
-      "List Wajom affiliates (users with affiliate_id) with referral count and commission.",
+      "List Wajom affiliates (users who referred other users or were credited with orders), ranked by sort_by. affiliate_stats: referred_users = users whose affiliate_id is this affiliate; orders = all orders credited to them; paid_orders and commission count Purchase/Complete orders only.",
     inputSchema: z.object({
+      sort_by: z.enum(["commission", "paid_orders", "referred_users"]).optional().default("commission"),
       limit: z.number().optional().default(50),
       offset: z.number().optional().default(0),
     }),
@@ -252,7 +253,8 @@ server.registerTool(
 server.registerTool(
   "wajom_get_affiliate",
   {
-    description: "Get a Wajom affiliate's detail: referral sales, withdrawals.",
+    description:
+      "Get a Wajom affiliate's detail: affiliate_stats, referred users, referral sales, withdrawals. affiliate_id is the affiliate's user id or public affiliate code.",
     inputSchema: z.object({ affiliate_id: z.string() }),
   },
   async (args) => {
