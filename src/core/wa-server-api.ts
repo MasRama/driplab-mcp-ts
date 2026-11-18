@@ -8,7 +8,9 @@
  * Each WA server instance exposes:
  *   GET {connect_url}/api/queue/stats?date_from=&date_to=
  *
- * Auth: /api paths bypass the origin check in auth middleware.
+ * Auth: the engine only answers callers that send the instance's own
+ * whatsapp-id header (or the internal token), so every call passes the
+ * device id from the portal DB.
  *
  * The portal DB (whatsapps table) provides connect_url + port for each
  * device, so MCP can resolve which endpoint to call per device.
@@ -43,6 +45,7 @@ export interface QueueStatsResponse {
  */
 export async function fetchQueueStats(
   connectUrl: string,
+  whatsappId: string,
   opts: { dateFrom?: string | null; dateTo?: string | null } = {}
 ): Promise<QueueStatsResponse | null> {
   try {
@@ -55,7 +58,7 @@ export async function fetchQueueStats(
 
     const res = await fetch(url.toString(), {
       signal: controller.signal,
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", "whatsapp-id": whatsappId },
     });
     clearTimeout(timer);
 
@@ -83,7 +86,7 @@ export async function fetchQueueStatsBatch(
   for (let i = 0; i < devices.length; i += chunkSize) {
     const chunk = devices.slice(i, i + chunkSize);
     const settled = await Promise.allSettled(
-      chunk.map((d) => fetchQueueStats(d.connect_url, opts))
+      chunk.map((d) => fetchQueueStats(d.connect_url, d.id, opts))
     );
     settled.forEach((s, idx) => {
       if (s.status === "fulfilled" && s.value !== null) {

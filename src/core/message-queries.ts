@@ -385,7 +385,7 @@ export async function deviceMessageStats(
     };
   }
 
-  const stats = await fetchQueueStats(wa.connect_url, {
+  const stats = await fetchQueueStats(wa.connect_url, wa.id, {
     dateFrom: opts.dateFrom,
     dateTo: opts.dateTo,
   });
